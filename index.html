@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Platformer</title>
+    <link rel="icon" href="images/coin.png">
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+
+      canvas {
+        box-sizing: border-box;
+        width: 100%;
+        height: 100%;
+        background: url('images/empty.png') repeat top left / 106px
+      }
+    </style>
+  </head>
+
+  <body>
+    <canvas></canvas>
+    <script>
+      const canvas = document.querySelector("canvas");
+      const context = canvas.getContext("2d");
+      const dpr = window.devicePixelRatio || 1;
+
+      //------------ Class Defining -------------
+      class Pos {
+        constructor(x, y) {
+          this.x = x;
+          this.y = y;
+        }
+
+        equals({ x, y }) {
+          return this.x === x && this.y === y;
+        }
+
+        clone() {
+          return new Pos(this.x, this.y);
+        }
+      }
+
+      class Sprite {
+        constructor(x, y, width, height) {
+          this.x = x;
+          this.y = y;
+          this.width = width;
+          this.height = height;
+        }
+
+        collides(other) {
+          return (
+            other.x < this.x + this.width &&
+            other.x + other.width > this.x &&
+            other.y < this.y + this.height &&
+            other.y + other.height > this.y
+          );
+        }
+
+        draw(img) {
+          if (!this.visible()) return; //test if in viewport
+
+          context.drawImage(game.images[img], this.x, this.y, this.width, this.height);
+        }
+
+        visible() {
+          return this.collides({
+            x: board.scroll.x,
+            y: board.scroll.y,
+            width: board.viewport.width,
+            height: board.viewport.height,
+          });
+        }
+      }
+
+      class Coin extends Sprite {
+        constructor(x, y) {
+          super(x + .25, y + .25, .5, .5);
+          this.basePos = new Pos(this.x, this.y);
+          this.stage = Math.floor(Math.random() * 361);
+          this.framesUntilChange = Math.floor(Math.random() * 120);
+          this.stripState = 1;
+        }
+
+        move() {
+          this.stage += 0.1;
+          this.x = this.basePos.x + Math.sin(this.stage) / 4;
+          if (this.collides(player)) board.coins = board.coins.filter(coin => coin != this);
+        }
+
+        draw() {
+          if (!super.visible()) return;
+
+          this.framesUntilChange--;
+
+          if (this.framesUntilChange < 1) {
+            this.stripState++;
+            this.framesUntilChange = 3;
+
+            if (this.stripState > 10) {
+              this.stripState = 1;
+              this.framesUntilChange = 200;
+            }
+          }
+
+          context.drawImage(
+            game.images.coin_strip,
+            (this.stripState - 1) * 650, 0, 650, 650,
+            this.x, this.y, this.width, this.height
+          );
+        }
+      }
+
+      //----------- Global Variables -------------
+      let player = {
+        x: null,
+        y: null,
+        width: .7,
+        height: 1.4,
+        opacity: 1,
+        yspeed: 0,
+        Ymode: "grounded",
+        respawning: { active: false, current: null, duration: { out: 20, in: 40 }, elapsed: 0 }, //duration and elapsed in frames
+
+        overlap: {
+          get xstart() {
+            return Math.floor(player.x);
+          },
+          get ystart() {
+            return Math.floor(player.y);
+          },
+          get width() {
+            return Math.ceil(player.x + player.width) - this.xstart;
+          },
+          get height() {
+            return Math.ceil(player.y + player.height) - this.ystart;
+          },
+          get tiles() {
+            return board.tiles(this.xstart, this.ystart, this.width, this.height);
+          },
+          get below() {
+            return board.tiles(this.xstart, this.ystart + this.height, this.width, 1);
+          },
+          get lower() {
+            return board.tiles(this.xstart, this.ystart + this.height - 1, this.width, 1);
+          },
+          get upper() {
+            return board.tiles(this.xstart, this.ystart, this.width, 1);
+          }
+        },
+
+        move() {
+          if (this.respawning.active) {
+            if (this.respawning.current === "in" && this.respawning.elapsed > this.respawning.duration.in / 2) this.y += (Math.ceil(this.height) - this.height) / this.respawning.duration.in * 2;
+            return;
+          }
+
+          let oldPos = { x: this.x, y: this.y };
+
+          //--------- Find and Test X -----------
+          if (game.controls.right) this.x += .07;
+          if (game.controls.left) this.x -= .07;
+
+          if (!board.isSolid(this.overlap.tiles, "none")) this.x = oldPos.x;
+
+          //--------- Find and Test Y -----------
+          let touchingLadder = (board.at(Math.floor(player.x + player.width / 2), this.overlap.ystart + this.overlap.height - 1) === "ladder");
+
+          //update Ymode
+          switch (this.Ymode) {
+            case "grounded":
+              if (game.controls.up) {
+                this.Ymode = "jumping";
+                this.yspeed = -0.25;
+              }
+              if (board.isSolid(this.overlap.below, "none")) this.Ymode = "falling";
+              // up pressed -> jumping
+              // empty below -> falling
+              // touching ladder -> climbing
+              break;
+
+            case "jumping":
+              if (this.yspeed > 0) this.Ymode = "falling"; // -> falling
+              // yspeed > 0 -> falling
+              // never -> grounded
+              // touching ladder -> climbing
+              break;
+
+            case "falling":
+              // never -> jumping
+              // solid below -> grounded (later)
+              // touching ladder -> climbing
+              break;
+
+            case "climbing":
+              //when not touching ladder anymore
+              // up pressed -> jumping
+              // otherwise -> falling
+              // never -> grounded
+              if (!touchingLadder) {
+                if (game.controls.up) {
+                  this.Ymode = "jumping";
+                  this.yspeed = -0.25;
+                }
+                else this.Ymode = "falling";
+              }
+          }
+
+          if (touchingLadder) {
+            this.Ymode = "climbing";
+            this.yspeed = 0;
+          }
+
+          switch (this.Ymode) {
+            case "jumping"://gravity
+            case "falling":
+              this.yspeed += .0125;
+              this.y += this.yspeed;
+              break;
+
+            case "climbing":
+              if (game.controls.up) this.y -= 0.1;
+              if (game.controls.down) this.y += 0.1;
+              break;
+          }
+
+          //------------- Test State ------------
+          //if upper block is solid, stop moving up
+          if (board.isSolid(this.overlap.upper, "some")) {
+            this.y = oldPos.y;
+            this.yspeed = 0;
+          }
+
+          //if lower block is solid, stop falling
+          if (board.isSolid(this.overlap.lower, "some")) {
+            this.y = this.overlap.ystart + this.overlap.height - 1 - this.height;
+            this.yspeed = 0;
+            if (this.Ymode === "falling") this.Ymode = "grounded";
+          }
+        },
+
+        draw() {
+          if (this.respawning.active) {
+            if (this.respawning.current === "out") context.globalAlpha = 1 - (this.respawning.elapsed / this.respawning.duration.out);
+
+            if (this.respawning.current === "in") context.globalAlpha = this.respawning.elapsed / this.respawning.duration.in;
+
+            this.respawning.elapsed++;
+            if (this.respawning.elapsed >= this.respawning.duration[this.respawning.current]) {
+              this.respawning.elapsed = 0; //reset counter
+
+              if (this.respawning.current === "out") game.startLevel(game.level); //restart level
+              else if (this.respawning.current === "in") {
+                this.respawning.current = null;
+                this.respawning.active = false;
+                this.gravity = true;
+              }
+            }
+          }
+
+          context.drawImage(game.images.player, player.x, player.y, player.width, player.height);
+          context.globalAlpha = 1;
+        },
+
+        startFade(change) {
+          this.respawning.active = true;
+          this.respawning.current = change;
+          if (change === "in") {
+            player.gravity = false;
+          }
+        }
+      }
+
+      let board = {
+        coins: [],
+        trophy: null,
+        tileSize: null,
+        scroll: { x: null, y: null },
+        viewport: { width: null, height: null },
+        tiletypes: { solid: ["wall"], passable: ["empty", "lava", "ladder", "out"], deadly: ["lava"] },
+        levelplans: [`
+################
+#              #
+#  U           #
+#  =           #
+#  =           #
+#  =           #
+#  =           #
+#  =           #
+#  =           #
+#  =    @   ooo#
+################
+`, `
+#################
+#            #  #
+#               #
+#               #
+#          # #  #
+#@ #vv# oo #v# U#
+#################
+`, `
+################
+#              #
+#     o        #
+#    o         #
+#   o          #
+#  ##          #
+#  ##v      o# #
+# ####v   o#v  #
+#@#####  v#  U #
+################
+`, `
+########        
+#      #        
+#      #        
+#      #########
+#@             #
+###     U      #
+#       # o o  #
+#  vvovvv # #  #
+#       vvvvv  #
+#             ##
+#   v#  o  o   #
+################
+`, `
+               
+#vv  o         
+#   ## o       
+# o     #  #vov
+###  vov  ##  #
+#vv o     v   #
+    ##   #    #
+@ o v##  vU   #
+###############
+`, `
+            v   
+            v  @
+  #   #   v  o# 
+  o #o  #Uv   # 
+  #  #   #   #  
+o    #o   o#    
+#      #   #    
+o   o  #o#      
+#v########      
+`, `
+               
+               
+        o      
+      ######   
+  o ov       # 
+  #  v      o  
+o  v v      #  
+##  v      #   
+#v ov          
+  #        # o 
+@  #U #       #
+####o          
+  ###o  #   #  
+    ####v##v####
+`],
+
+        get chars() { return board.levelplans[game.level - 1].split("\n").filter(str => str != "") },
+        get width() { return board.chars[0].length },
+        get height() { return board.chars.length },
+
+        at(x, y) {
+          const char = board.chars[y]?.[x];
+          if (char === null) return "out";
+          switch (char) {
+            case "#": return "wall";
+            case "v": return "lava";
+            case "=": return "ladder";
+          }
+          return "empty";
+        },
+
+        tiles(xstart, ystart, width, height) {
+          let tiles = [];
+          for (let y = ystart; y < ystart + height; y++)
+            for (let x = xstart; x < xstart + width; x++)
+              tiles.push({ type: board.at(x, y), x, y });
+          return tiles;
+        },
+
+        build() {
+          const startX = Math.floor(board.scroll.x);
+          const startY = Math.floor(board.scroll.y);
+          const endX = Math.floor(board.scroll.x + board.viewport.width);
+          const endY = Math.floor(board.scroll.y + board.viewport.height);
+
+          for (let y = Math.max(startY, 0); y <= Math.min(endY, board.height - 1); y++) {
+            for (let x = Math.max(startX, 0); x <= Math.min(endX, board.width - 1); x++) {
+
+              let tile = board.at(x, y);
+              if (tile === "out") {
+                alert("There has been an error");
+                console.log(`Tile at x:${x} y:${y} is undefined\nA row might be shorter than the rest`);
+              }
+
+              if (tile === "empty") continue;
+              context.drawImage(game.images[tile], x, y, 1, 1);
+            }
+          }
+        },
+
+        isSolid(tiles, test) {
+          if (test === "all") return tiles.every(tile => this.tiletypes.solid.includes(tile.type));
+          if (test === "some") return tiles.some(tile => this.tiletypes.solid.includes(tile.type));
+          if (test === "none") return tiles.every(tile => !this.tiletypes.solid.includes(tile.type));
+        }
+      }
+
+      let game = {
+        images: { player: null, coin_strip: null, wall: null, lava: null, empty: null, trophy: null, ladder: null },
+        level: 1,
+        controls: { right: false, left: false, up: false, down: false },
+
+        update() {
+          player.move();
+          board.coins.forEach(coin => coin.move());
+
+          //--------------------- Scrolling -------------------------
+          context.resetTransform();
+          context.clearRect(0, 0, canvas.width, canvas.height);
+
+          if (board.width - board.viewport.width < 0) board.scroll.x = -(board.viewport.width - board.width) / 2;
+          else board.scroll.x = clamp(player.x + player.width / 2 - board.viewport.width / 2, -.5, board.width - board.viewport.width + .5);
+
+          if (board.height - board.viewport.height < 0) board.scroll.y = -(board.viewport.height - board.height) / 2;
+          else board.scroll.y = clamp(player.y + player.height / 2 - board.viewport.height / 2, -.5, board.height - board.viewport.height + .5);
+
+          context.scale(board.tileSize, board.tileSize);
+          context.translate(-board.scroll.x, -board.scroll.y);
+
+          canvas.style.backgroundPosition = `
+              ${-(board.scroll.x * .5 % board.tileSize) * board.tileSize}px
+              ${-(board.scroll.y * .5 % board.tileSize) * board.tileSize}px`;
+          //---------------------------------------------------------
+
+          board.build();
+
+          if (board.coins.length === 0) board.trophy.draw("trophy");
+
+          //draw player and coins
+          player.draw();
+          board.coins.forEach(coin => coin.draw());
+
+          //test for winning -> next level
+          if (board.coins.length === 0 && board.trophy.collides(player)) {
+            if (game.level != board.levelplans.length) game.startLevel(game.level + 1);
+            else { game.won(); return; }
+          }
+
+          //test for death -> restart
+          if (
+            player.overlap.tiles.some(tile => board.tiletypes.deadly.includes(tile.type)) ||
+            player.y > board.height
+          ) player.startFade("out");
+
+          requestAnimationFrame(game.update);
+        },
+
+        startLevel(level) {
+          game.level = level;
+          getTileSize();
+
+          player.x = null;
+          player.y = null;
+          player.Ymode = "grounded";
+          board.coins = [];
+          board.trophy = null;
+          game.controls = { right: false, left: false, up: false, down: false };
+
+
+          for (let y = 0; y < board.height; y++) {
+            for (let x = 0; x < board.width; x++) {
+              let char = board.chars[y][x];
+              if (char === "@") {
+                player.x = x;
+                player.y = y - 1;
+              }
+              if (char === "o") board.coins.push(new Coin(x, y));
+              if (char === "U") board.trophy = new Sprite(x + .125, y + .25, .75, .75);
+            }
+          }
+
+          board.viewport.width = canvas.width / board.tileSize;
+          board.viewport.height = canvas.height / board.tileSize;
+          board.scroll.x = player.x + (player.width / 2) + (board.viewport.width / 2);
+          board.scroll.y = player.y + (player.height / 2) + (board.viewport.height / 2);
+
+          player.startFade("in");
+        },
+
+        won() {
+          context.resetTransform();
+          context.clearRect(0, 0, canvas.width, canvas.height);
+          context.fillStyle = "gold";
+          context.font = "100px consolas";
+          context.textAlign = "center";
+          context.fillText("You Win", canvas.width / 2, 100);
+          context.drawImage(game.images.player, canvas.width * .4, canvas.height / 4, canvas.width / 10, canvas.width / 5);
+          context.drawImage(game.images.trophy, canvas.width * .52, canvas.height / 2, canvas.width / 14, canvas.width / 14);
+        }
+      }
+
+      //-------- After Initialization -----------
+      setupCanvas();
+      game.startLevel(1);
+
+      //load images
+      Promise.all(
+        //array of image names
+        Object.keys(game.images).map(name => {
+          //add promise
+          return new Promise(resolve => {
+            let image = new Image();
+            game.images[name] = image;
+            image.src = "images/" + name + ".png";
+            //resolve when the image has loaded
+            image.onload = () => resolve();
+          });
+        })
+      ).then(game.update);
+
+      //---------- Helper Functions -------------
+      function setupCanvas() {
+        canvas.width = window.innerWidth * dpr;
+        canvas.height = window.innerHeight * dpr;
+        getTileSize();
+      }
+
+      function getTileSize() {
+        //calculate new tileSize
+        let tileWidth = (canvas.width - 40) / board.width;
+        let tileHeight = (canvas.height - 40) / board.height;
+        let tileSize = Math.min(tileWidth, tileHeight);
+        board.tileSize = Math.floor(tileSize);
+
+        if (board.tileSize < 100) board.tileSize = 100;
+
+        //update background size on canvas
+        canvas.style.backgroundSize = board.tileSize + "px";
+      }
+
+      function clamp(num, min, max) {
+        if (num < min) return min;
+        if (num > max) return max;
+        return num;
+      }
+
+      //---------- Events Handlers --------------
+      function handleKeys(event, value) {
+        let key = event.key;
+
+        if (key.startsWith("Arrow")) {
+          game.controls[key.slice(5).toLowerCase()] = value;
+        }
+
+        if (["w", "a", "s", "d"].includes(key)) {
+          game.controls[{ w: "up", a: "left", s: "down", d: "right" }[key]] = value;
+        }
+
+        if (key === "r" && value && !event.repeat && !player.respawning.active) { //only restart when keydown
+          game.startLevel(game.level);
+        }
+      }
+
+      window.addEventListener("keydown", e => handleKeys(e, true));
+      window.addEventListener("keyup", e => handleKeys(e, false));
+      window.addEventListener("resize", setupCanvas);
+      window.addEventListener("message", e => {
+        board.levelplans = [e.data];
+        game.startLevel(1);
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Level Maker</title>
+    <link rel="icon" type="image/png" href="images/wall.png">
+    <style>
+      /****************  General  ****************/
+      body {
+        height: 100vh;
+        margin: 0;
+        color: white;
+        background-color: black;
+        font-family: "Segoe UI", system-ui, calibri, sans-serif;
+        user-select: none;
+
+        display: grid;
+        grid-template-areas:
+          ".         sizetop     .         "
+          "sizeleft  grid        sizeright "
+          ".         sizebottom  .         "
+          "tools     tools       tools     ";
+        grid-template-rows: auto 70% auto 1fr;
+        grid-template-columns: 1fr 60% 1fr;
+      }
+
+      button {
+        background: white;
+        border: none;
+        border-radius: 4px; /* pixels */
+        padding: 3px 5px; /* pixels */
+        font-size: 0.8vw; /* pixels */
+        transition: background-color 0.2s;
+      }
+
+      button:hover {
+        background-color: rgb(139, 189, 193);
+      }
+      
+      button:active {
+        background-color: rgb(75, 103, 105);
+      }
+
+      /*************  Size Controls  *************/
+      .sizeControls {
+        display: flex;
+        margin: 1vh;
+        gap: 1vh;
+        visibility: hidden;
+      }
+
+      .sizeControls button {
+        width: 30px; /* pixels */
+        height: 30px; /* pixels */
+        font-size: large; /* pixels */
+      }
+
+      .sizeControls.left {
+        grid-area: sizeleft;
+        place-self: center end;
+        flex-direction: column;
+      }
+
+      .sizeControls.right {
+        grid-area: sizeright;
+        place-self: center start;
+        flex-direction: column;
+      }
+
+      .sizeControls.top {
+        grid-area: sizetop;
+        place-self: end center;
+        flex-direction: row;
+      }
+
+      .sizeControls.bottom {
+        grid-area: sizebottom;
+        place-self: start center;
+        flex-direction: row;
+      }
+
+      body.resizing .sizeControls {
+        visibility: visible;
+      }
+
+      /*************  Editing Grid  **************/
+      #grid {
+        grid-area: grid;
+        place-self: center;
+
+        width: 100%;
+        max-height: 100%;
+
+        display: grid;
+      }
+
+      #grid div {
+        grid-area: var(--row) / var(--col);
+        place-self: stretch;
+        min-width: 0;
+        min-height: 0;
+        padding: 0;
+        background: url("images/empty.png") center / cover no-repeat;
+        cursor: pointer;
+        display: grid;
+        place-items: center;
+      }
+
+      #grid img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      #grid div:has(img.player) {
+        z-index: 0;
+        grid-row-start: calc(var(--row) - 1);
+        grid-row-end: span 2;
+      }
+
+      #grid img.coin {
+        width: 50%;
+        height: 50%;
+      }
+
+      /****************  Toolbar  ****************/
+      #toolbar {
+        grid-area: tools;
+        place-self: start center;
+        height: 50%;
+        min-width: 0;
+        min-height: 0;
+        display: flex;
+        align-items: center;
+        gap: 50px;
+      }
+
+      #images {
+        height: 100%;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 20px;
+      }
+
+      #images img {
+        height: calc(100% - 20px);
+        margin: 10px;
+        border: 0 solid var(--border-color);
+
+        transition: border 0.2s linear, margin 0.2s linear;
+      }
+
+      #images img.padding {
+        height: calc(100% - 30px);
+        padding: 5px;
+      }
+
+      #images img.selected {
+        margin: 0;
+        border-width: 10px;
+      }
+
+      #buttons {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-evenly;
+      }
+
+      #sizeCheck {
+        font-size: 19px;
+      }
+
+      #sizeCheck input {
+        width: 15px;
+        margin: 0 4px 0 0;
+      }
+     
+      /****************  Testing  ****************/
+      body.testing #iframe,
+      body.testing #endBtn {
+        display: block;
+      }
+
+      #iframe {
+        width: 100vw;
+        height: 100vh;
+        border: none;
+        position: absolute;
+        inset: 0;
+        display: none;
+      }
+
+      #endBtn {
+        position: absolute;
+        inset: auto 10vw 10vh auto;
+        z-index: 1;
+        display: none;
+      }
+    </style>
+  </head>
+
+  <body class="hideSizeControls">
+    <!-- Size Controls -->
+    <div class="sizeControls left">
+      <button data-action="add"    data-axis="col" data-position="start" >+</button>
+      <button data-action="remove" data-axis="col" data-position="start" >-</button>
+    </div>
+    <div class="sizeControls right">
+      <button data-action="add"    data-axis="col" data-position="end"   >+</button>
+      <button data-action="remove" data-axis="col" data-position="end"   >-</button>
+    </div>
+    <div class="sizeControls top">
+      <button data-action="add"    data-axis="row" data-position="start" >+</button>
+      <button data-action="remove" data-axis="row" data-position="start" >-</button>
+    </div>
+    <div class="sizeControls bottom">
+      <button data-action="add"    data-axis="row" data-position="end"   >+</button>
+      <button data-action="remove" data-axis="row" data-position="end"   >-</button>
+    </div>
+
+    <div id="grid"></div>
+
+    <div id="toolbar">
+      <label id="sizeCheck">
+        <input type="checkbox" />
+        Size controls
+      </label>
+
+      <span id="images"></span>
+
+      <span id="buttons">
+        <button id="pasteBtn">Paste</button>
+        <button id="copyBtn">Copy</button>
+        <button id="testBtn">Test</button>
+        <button id="endBtn">Edit</button> <!-- Absolutely positioned, not in layout -->
+      </span>
+    </div>
+
+    <iframe id="iframe" src="index.html"></iframe>
+
+    <script src="utilities/jQuery.js"></script> <!-- Jquery -->
+    <script>
+      //------------------------- Global Variables ----------------------------
+      //info on all tiles and sprites
+      const data = [
+        { name: "wall",   char: "#", outline: "gray",    tags: []                              },
+        { name: "lava",   char: "v", outline: "darkred", tags: []                              },
+        { name: "empty",  char: " ", outline: "#222",    tags: []                              },
+        { name: "coin",   char: "o", outline: "gold",    tags: ["padding"]                     },
+        { name: "trophy", char: "U", outline: "orange",  tags: ["single", "needed", "padding"] },
+        { name: "player", char: "@", outline: "green",   tags: ["single", "needed", "padding"] },
+        { name: "ladder", char: "=", outline: "tan",     tags: ["padding"]                     },
+      ];
+
+      let level = new Array(8).fill(null).map(() => new Array(16).fill(" "));
+      let current   //selected image in name form
+     
+      //------------------------- Button Functions ----------------------------
+      function resize(action, axis, position) {
+        const start = (position === "start");
+        const width = level[0]?.length;
+        const height = level.length;
+
+        //return if trying to remove final line
+        if (action === "remove") {
+          if (axis === "row" && height === 1) return;
+          if (axis === "col" && width === 1) return;
+        }
+
+        const method = {
+          add:    start? "unshift" : "push",
+          remove: start? "shift"   : "pop"
+        }[action];
+
+        if (axis === "row") level[method](new Array(width).fill(" "));
+        if (axis === "col") level.forEach(row => row[method](" "));
+        updateGrid();
+      }
+
+      function copy() {
+        if (!checkLevel()) return;
+
+        navigator.clipboard.writeText(charsToString());
+        alert("Copied!");
+      }
+
+      function paste() {
+        const newText = prompt("Paste level text here");
+        let updated = newText.split("\n").map(row => row.split(""));
+
+        if (updated.length === 0 || updated[0]?.length === 0) {
+          alert("Level cannot be empty");
+          return;
+        }
+
+        if (!updated.every(row => row.length === updated[0].length)) {
+          alert("Each line must be the same length");
+          return;
+        }
+
+        level = updated;
+        updateGrid();
+      }
+
+      function test() {
+        if (!checkLevel()) return;
+
+        $("#iframe")[0].contentWindow.postMessage(charsToString(), "*");
+        $("#iframe")[0].contentWindow.focus();
+
+        $(document.body).addClass("testing");
+      }
+
+      function endTest() {
+        $(document.body).removeClass("testing");
+      }
+
+      //------------------------- Helper Functions ----------------------------
+      /**
+       * Get the item with a [property] of [value]
+       */
+      function findItem(property, value) {
+        const result = data.find(info => info[property] === value);
+        return result || null;
+      }
+
+      /**
+       * Map each item with [tag] to item[key]
+       */
+      function itemsWithTag(tag, key) {
+        const results = data.filter(info => info.tags.includes(tag));
+        return results.map(info => info[key]);
+      }
+
+      function spriteHTML(type) {
+        if (type === "empty") return "";
+
+        //detect other singles and remove them
+        if (itemsWithTag("single", "name").includes(type)) {
+          $(`#grid img.${type}`).each(function () {
+            const cell = $(this).parent();
+            const { row, col } = cell.data();
+
+            this.remove(); //remove image element
+            level[row][col] = " "; //reset data
+          });
+        } 
+
+        return `<img src="images/${type}.png" class="${type}" draggable="false" />`;
+      }
+
+      function checkLevel() {
+        const needed = itemsWithTag("needed", "char");
+        const has = needed.filter(char => level.flat().includes(char));
+        const dontHave = needed.filter(char => !level.flat().includes(char))
+
+        if (has.length < needed.length) {
+          alert("You need " + dontHave.join(", "));
+          return false;
+        }
+
+        const player = $("#grid img.player").parent().data();
+        const belowPlayer = level[player.row + 1]?.[player.col];
+        if (!belowPlayer || belowPlayer === " ") { //if the block under the player is empty or doesn't exist
+          alert("The player must be on a solid tile");
+          return false;
+        }
+        
+        return true;
+      }
+
+      function charsToString() {
+        return level.map(row => row.join("")).join("\n");
+      }
+
+      function updateGrid() {
+        const rows = level.length;
+        const cols = level[0]?.length;
+
+        if (!rows || !cols) return; //cancel if length or width is 0
+
+        let gridHTML = "";
+
+        //build grid
+        for (let y = 0; y < rows; y++) {
+          for (let x = 0; x < cols; x++) {
+            const type = findItem("char", level[y][x]).name;
+            gridHTML += `
+              <div
+                data-row="${y}"
+                data-col="${x}"
+                style="--row: ${y + 1}; --col: ${x + 1};"
+              >${spriteHTML(type)}</div>`;
+          }
+        }
+
+        $("#grid").css({
+          gridTemplate: `repeat(${rows}, 1fr) / repeat(${cols}, 1fr)`,
+          aspectRatio: `${cols} / ${rows}`
+        });
+
+        $("#grid").html(gridHTML);
+      }
+
+      //-------------------------- Event Handlers -----------------------------
+      //change grid
+      $("#grid").on("mousedown mouseover", "div", function(e) {
+        const cell = $(this);
+        const { row, col } = cell.data();
+        const type = findItem("char", level[row][col]).name;
+
+        //quit if mouse isn't down or the current type is same a the clicked one
+        if (e.buttons !== 1 || type === current) return;
+
+        //update grid (instead of syncGrid)
+        cell.html(spriteHTML(current));
+
+        //update data
+        level[row][col] = findItem("name", current).char;
+      });
+
+      //selected type
+      $("#images").on("click", "img", function() {
+        const img = $(this);
+        const type = img.data("type");
+
+        //quit if selected type is the same as the current one
+        if (type === current) return;
+
+        //update data
+        current = type;
+
+        //update elements (outline)
+        $("#images .selected").removeClass("selected");
+        img.addClass("selected");
+      });
+
+      //buttons
+      $("#pasteBtn").on("click", paste);
+      $("#copyBtn").on("click", copy);
+      $("#testBtn").on("click", test);
+      $("#endBtn").on("click", endTest);
+
+      $(".sizeControls").on("click", "button", function() {
+        const { action, axis, position } = $(this).data();
+        resize(action, axis, position);
+      });
+
+      //size controls checkbox
+      $("#sizeCheck input").on("change", function(){
+        $(document.body).toggleClass("resizing", this.checked);
+      });
+
+      //-------------------------- Initialization -----------------------------
+      //initialize images in toolbar
+      $("#images").html(
+        data.map(info => {
+          const padding = info.tags.includes("padding") ? 'class="padding"' : '';
+          return `<img
+            data-type="${info.name}"
+            src="images/${info.name}.png"
+            ${padding}
+            style="--border-color: ${info.outline};"
+            draggable="false"
+          />`;
+        }).join("\n")
+      );
+
+      //simulate click on first image
+      $("#images").children().first().trigger("click");
+
+      //build grid
+      updateGrid();
+    </script>
+  </body>
+</html>
